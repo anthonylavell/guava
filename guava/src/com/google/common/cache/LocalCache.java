@@ -64,6 +64,7 @@ import java.lang.ref.Reference;
 import java.lang.ref.ReferenceQueue;
 import java.lang.ref.SoftReference;
 import java.lang.ref.WeakReference;
+import java.time.Duration;
 import java.util.AbstractCollection;
 import java.util.AbstractMap;
 import java.util.AbstractQueue;
@@ -4901,6 +4902,36 @@ class LocalCache<K, V> extends AbstractMap<K, V> implements ConcurrentMap<K, V> 
     @Override
     public ConcurrentMap<K, V> asMap() {
       return localCache;
+    }
+
+    public void reproduceStackOverFlow() throws InterruptedException {
+      long expireAfterAccess = 10000L;
+      Cache<Integer, String> cache = CacheBuilder.newBuilder()
+              .expireAfterAccess(Duration.ofMillis(expireAfterAccess))
+              .build();
+
+      int key = 100;
+      int maxChainLength = 65536; //tested with JVM 2MB stack size, this number may go higher with larger stack size settings
+      for (int i = 0; i < maxChainLength; i++) {
+        try {
+          cache.asMap().computeIfAbsent(key, (k) -> {
+            throw new RuntimeException(); //simulate loading error, can happen with no value for a specific key or a service call fail
+          });
+        } catch (Exception e) {
+          //ok, eat it
+        }
+      }
+
+      //let the entry expire
+      Thread.sleep(expireAfterAccess);
+
+      try {
+        cache.asMap().computeIfAbsent(key, (k) -> "foobar");
+      } catch (Error error) {
+        error.printStackTrace();
+        if (!(error instanceof StackOverflowError)) {
+        }
+      }
     }
 
     @Override
